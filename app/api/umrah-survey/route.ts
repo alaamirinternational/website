@@ -10,7 +10,7 @@ const allowed = {
   distance: ["500 میٹر", "800 میٹر", "شٹل سروس", "اپنی پسند کا فاصلہ"],
   room: ["شیئرنگ", "الگ کمرہ"], hotel: ["اکانومی", "اکانومی پلس", "3 اسٹار", "5 اسٹار"],
   companions: ["اکیلے", "فیملی کے ساتھ"], answer: ["جی ہاں", "نہیں"],
-  month: ["دسمبر", "جنوری", "فروری", "مارچ (رمضان)", "اپریل"],
+  month: ["December", "January", "February / Ramadan", "March / Shawwal"],
 } as const;
 
 const fail = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status });
@@ -30,6 +30,19 @@ export async function POST(request: Request) {
   if (!/^([+]?(92)|0)?3\d{9}$/.test(phone.replace(/[\s()-]/g, ""))) return fail("براہ کرم درست پاکستانی موبائل نمبر درج کریں۔");
   const email = text(data, "email", 254);
   if (email && !isValidEmail(email)) return fail("براہ کرم درست ای میل درج کریں۔");
+
+  const companions = text(data, "companions");
+  const positiveCount = (key: string, required: boolean) => {
+    const raw = text(data, key, 10);
+    if (!raw && !required) return null;
+    if (!/^\d{1,3}$/.test(raw)) return NaN;
+    const value = Number(raw);
+    return Number.isSafeInteger(value) && value >= 1 && value <= 100 ? value : NaN;
+  };
+  const familyMembers = companions === "فیملی کے ساتھ" ? positiveCount("familyMembers", true) : null;
+  const adults = companions === "فیملی کے ساتھ" ? positiveCount("adults", false) : null;
+  const children = companions === "فیملی کے ساتھ" ? positiveCount("children", false) : null;
+  if ([familyMembers, adults, children].some(value => typeof value === "number" && !Number.isFinite(value))) return fail("براہ کرم فیملی کے افراد کی تعداد درست درج کریں۔");
 
   const pick = (key: string, options: readonly string[]) => options.includes(text(data, key, 100));
   if (!pick("duration", allowed.duration) || !pick("flight", allowed.flight) || !pick("makkahDistance", allowed.distance) || !pick("madinahDistance", allowed.distance) || !pick("roomType", allowed.room) || !pick("hotel", allowed.hotel) || !pick("companions", allowed.companions) || !pick("ziyarat", allowed.answer) || !pick("month", allowed.month)) return fail("براہ کرم دیے گئے اختیارات میں سے درست انتخاب کریں۔");
@@ -57,7 +70,13 @@ export async function POST(request: Request) {
     { label: "سفر کی مدت", value: duration }, { label: "فلائٹ کی پسند", value: text(data, "flight") }, { label: "ایئرلائنز", value: airlines.join("، ") },
     { label: "مکہ کا فاصلہ", value: [makkahDistance, makCustom].filter(Boolean).join(" — ") }, { label: "مدینہ کا فاصلہ", value: [madinahDistance, madCustom].filter(Boolean).join(" — ") },
     { label: "رہائش", value: text(data, "roomType") }, { label: "ہوٹل کیٹیگری", value: hotel }, { label: "فی کس بجٹ", value: budgetDisplay },
-    { label: "سفر کے ساتھی", value: text(data, "companions") }, { label: "مکہ و مدینہ زیارات", value: text(data, "ziyarat") },
+    { label: "سفر کے ساتھی", value: companions },
+    ...(companions === "فیملی کے ساتھ" ? [
+      { label: "Family Members کی کل تعداد", value: String(familyMembers) },
+      ...(adults !== null ? [{ label: "Adults کی تعداد", value: String(adults) }] : []),
+      ...(children !== null ? [{ label: "بچوں کی تعداد", value: String(children) }] : []),
+    ] : []),
+    { label: "مکہ و مدینہ زیارات", value: text(data, "ziyarat") },
     { label: "دیگر مقامات", value: text(data, "otherPlaces", 500) || "درج نہیں" }, { label: "روانگی کا شہر", value: text(data, "departureCity") },
     { label: "پسندیدہ مہینہ", value: text(data, "month") },
   ];
@@ -65,7 +84,8 @@ export async function POST(request: Request) {
   if (!smtpIsConfigured()) return fail("ای میل سروس ابھی ترتیب میں نہیں ہے۔ براہ کرم بعد میں دوبارہ کوشش کریں۔", 503);
   const rate = reserveSubmission(requestIp(request), "umrah", {
     name, fatherName, city, phone, email, duration, flight: text(data, "flight"), airlines, makkahDistance, makCustom,
-    madinahDistance, madCustom, roomType: text(data, "roomType"), hotel, budget, companions: text(data, "companions"),
+    madinahDistance, madCustom, roomType: text(data, "roomType"), hotel, budget, companions,
+    familyMembers, adults, children,
     ziyarat: text(data, "ziyarat"), otherPlaces: text(data, "otherPlaces", 500), departureCity: text(data, "departureCity"), month: text(data, "month"),
   });
   if (rate === "limited") return fail("براہ کرم کچھ دیر بعد دوبارہ کوشش کریں۔", 429);

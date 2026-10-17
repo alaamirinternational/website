@@ -33,6 +33,7 @@ export function SurveyLanding() {
   const [hotel, setHotel] = useState("اکانومی");
   const [duration, setDuration] = useState("10 دن");
   const [budget, setBudget] = useState("");
+  const [travellingWith, setTravellingWith] = useState("");
   const [airlineChoices, setAirlineChoices] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
@@ -73,7 +74,7 @@ export function SurveyLanding() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "سروے بھیجنے میں مسئلہ پیش آیا۔");
       setStatus("آپ کا سروے موصول ہو گیا ہے۔ ہماری ٹیم آپ کی ترجیحات کا جائزہ لے کر آپ سے رابطہ کرے گی۔ یہ بکنگ کی تصدیق نہیں ہے۔");
-      form.reset(); setValues({}); setAirlineChoices([]); setBudget(""); setMak("500 میٹر"); setMad("500 میٹر"); setHotel("اکانومی"); setDuration("10 دن");
+        form.reset(); setValues({}); setAirlineChoices([]); setBudget(""); setMak("500 میٹر"); setMad("500 میٹر"); setHotel("اکانومی"); setDuration("10 دن"); setTravellingWith("");
     } catch (error) { setStatus(error instanceof Error ? error.message : "سروے بھیجنے میں مسئلہ پیش آیا۔ براہ کرم دوبارہ کوشش کریں۔"); }
     finally { setSending(false); }
   }
@@ -107,11 +108,19 @@ export function SurveyLanding() {
           <SelectField label="رہائش کیسی ہونی چاہیے؟" name="roomType" options={["شیئرنگ", "الگ کمرہ"]}/>
           <SelectField label="ہوٹل کیٹیگری" name="hotel" options={["اکانومی", "اکانومی پلس", "3 اسٹار", "5 اسٹار"]} onChange={setHotel}/>
           <Field label="فی کس کم از کم بجٹ (پاکستانی روپے)" name="budget" required><div className="money-input"><span dir="ltr">PKR</span><input id="budget" name="budget" type="number" dir="ltr" min="260000" step="1000" inputMode="numeric" placeholder="260,000" required value={budget} onChange={e => setBudget(e.target.value)} /></div></Field>
-          <SelectField label="آپ کس کے ساتھ سفر کرنا چاہتے ہیں؟" name="companions" options={["اکیلے", "فیملی کے ساتھ"]}/>
+          <SelectField label="آپ کس کے ساتھ سفر کرنا چاہتے ہیں؟" name="companions" options={["اکیلے", "فیملی کے ساتھ"]} onChange={value => {
+            setTravellingWith(value);
+            if (value !== "فیملی کے ساتھ") setValues(prev => ({ ...prev, familyMembers: "", adults: "", children: "" }));
+          }}/>
+          {travellingWith === "فیملی کے ساتھ" && <>
+            <Field label="Family Members کی کل تعداد" name="familyMembers" required><input id="familyMembers" name="familyMembers" type="number" dir="ltr" min="1" max="100" step="1" inputMode="numeric" required value={values.familyMembers as string || ""} onChange={e => update("familyMembers", e.target.value)} /></Field>
+            <Field label="Adults کی تعداد" name="adults"><input id="adults" name="adults" type="number" dir="ltr" min="1" max="100" step="1" inputMode="numeric" value={values.adults as string || ""} onChange={e => update("adults", e.target.value)} /></Field>
+            <Field label="بچوں کی تعداد" name="children"><input id="children" name="children" type="number" dir="ltr" min="1" max="100" step="1" inputMode="numeric" value={values.children as string || ""} onChange={e => update("children", e.target.value)} /></Field>
+          </>}
           <SelectField label="کیا آپ مکہ مکرمہ اور مدینہ منورہ کی زیارات کرنا چاہتے ہیں؟" name="ziyarat" options={["جی ہاں", "نہیں"]}/>
           <Field label="دیگر مقامات کی زیارت (اختیاری)" name="otherPlaces"><input id="otherPlaces" name="otherPlaces" placeholder="طائف، خیبر، تبوک یا دیگر" maxLength={500} value={values.otherPlaces as string || ""} onChange={e => update("otherPlaces", e.target.value)} /></Field>
           <Field label="آپ پاکستان کے کس شہر سے روانہ ہوں گے؟" name="departureCity" required><input id="departureCity" name="departureCity" required maxLength={100} value={values.departureCity as string || ""} onChange={e => update("departureCity", e.target.value)} /></Field>
-          <SelectField label="آپ کس مہینے میں عمرہ پر جانا چاہتے ہیں؟" name="month" options={["دسمبر", "جنوری", "فروری", "مارچ (رمضان)", "اپریل"]}/>
+          <SelectField label="آپ کس مہینے میں عمرہ پر جانا چاہتے ہیں؟" name="month" options={["December", "January", "February / Ramadan", "March / Shawwal"]}/>
         </div>
         </div>
         {budgetError && <div className="validation-note" role="alert"><span>!</span><div>{budgetError}</div></div>}
