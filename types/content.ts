@@ -45,7 +45,7 @@ export type SectionKind = "content" | "trust" | "packages" | "destinations" | "s
 export interface SectionConfig {
   id: string; title: string; kind: SectionKind; description?: string;
   items?: string[]; blocks?: ContentBlock[]; packageKind?: PackageKind;
-  formKind?: "enquiry" | "corporate" | "class" | "career"; cta?: CTA;
+  formKind?: "enquiry" | "corporate" | "class" | "career" | "contact" | "booking" | "package-enquiry" | "umrah" | "hajj" | "international-tour"; cta?: CTA;
   faqs?: FAQ[]; images?: ImageAsset[]; testimonials?: Testimonial[];
   guideSlugs?: string[]; memberIds?: string[]; trustFacts?: string[];
   downloads?: { title: string; href: string }[];

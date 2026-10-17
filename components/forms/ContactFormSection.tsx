@@ -1,7 +1,17 @@
 import Link from "next/link";
 import { Section } from "@/components/sections/Section";
-import { enquiryTypes } from "@/data/enquiries";
+import { ContactForm } from "@/components/forms/ContactForm";
 import type { EnquiryType } from "@/data/enquiries";
-export function ContactFormSection({ id = "contact-form", title = "Travel enquiry", kind = "enquiry", enquiryType = "Other" }: { id?: string; title?: string; kind?: "enquiry" | "corporate" | "class" | "career"; enquiryType?: EnquiryType }) {
-  return <Section id={id} title={title}><p id={`${id}-status`} className="notice">Form preview only. Submissions are disabled until secure lead delivery and privacy terms are configured.</p><form aria-describedby={`${id}-status`}><fieldset disabled><legend>{kind === "class" ? "Class registration details" : kind === "career" ? "Applicant details" : "Your enquiry details"}</legend><div className="form-grid"><label htmlFor={`${id}-name`}>Full name<input id={`${id}-name`} name="name" autoComplete="name" required /></label><label htmlFor={`${id}-email`}>Email<input id={`${id}-email`} name="email" type="email" autoComplete="email" required /></label><label htmlFor={`${id}-phone`}>Phone<input id={`${id}-phone`} name="phone" type="tel" autoComplete="tel" /></label>{kind === "enquiry" || kind === "corporate" ? <label htmlFor={`${id}-type`}>Enquiry type<select id={`${id}-type`} name="enquiryType" defaultValue={kind === "corporate" ? "Corporate Travel" : enquiryType}>{enquiryTypes.map(type => <option key={type}>{type}</option>)}</select></label> : <label htmlFor={`${id}-interest`}>{kind === "career" ? "Role of interest" : "Preferred class"}<input id={`${id}-interest`} name="interest" /></label>}{kind === "corporate" && <label htmlFor={`${id}-company`}>Organisation<input id={`${id}-company`} name="company" autoComplete="organization" /></label>}</div><label htmlFor={`${id}-message`}>Your requirements<textarea id={`${id}-message`} name="message" rows={5} maxLength={5000} required /></label><button className="button" type="button" disabled>Submissions not yet available</button></fieldset></form><p className="small">Read our <Link href="/privacy-policy">privacy policy</Link>. TODO: Add validated server submission, consent, spam protection and delivery confirmation.</p></Section>;
+import type { FormType } from "@/lib/server/lead-email";
+
+export function ContactFormSection({ id = "contact-form", title = "Travel enquiry", kind = "enquiry", enquiryType = "Other" }: {
+  id?: string;
+  title?: string;
+  kind?: FormType;
+  enquiryType?: EnquiryType;
+}) {
+  return <Section id={id} title={title}>
+    <ContactForm id={id} title={title} kind={kind} enquiryType={enquiryType} />
+    <p className="small">Read our <Link href="/privacy-policy">privacy policy</Link>.</p>
+  </Section>;
 }

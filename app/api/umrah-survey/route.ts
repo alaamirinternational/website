@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
+import { isValidEmail, readJsonObject, requestIp, reserveSubmission, sanitizeText, sendLeadEmail, smtpIsConfigured, type MailField } from "@/lib/server/lead-email";
 
 export const runtime = "nodejs";
-const recipient = "info@alaamir.co";
-const limits = new Map<string, number[]>();
+
 const allowed = {
   duration: ["10 دن", "15 دن", "21 دن", "28 دن"],
   flight: ["ڈائریکٹ فلائٹ", "ایک اسٹاپ والی فلائٹ", "کوئی بھی مناسب فلائٹ"],
@@ -11,51 +11,69 @@ const allowed = {
   room: ["شیئرنگ", "الگ کمرہ"], hotel: ["اکانومی", "اکانومی پلس", "3 اسٹار", "5 اسٹار"],
   companions: ["اکیلے", "فیملی کے ساتھ"], answer: ["جی ہاں", "نہیں"],
   month: ["دسمبر", "جنوری", "فروری", "مارچ (رمضان)", "اپریل"],
-};
-const clean = (value: unknown, max = 500) => typeof value === "string" ? value.trim().replace(/[<>]/g, "").slice(0, max) : "";
-const text = (body: Record<string, unknown>, key: string, max = 150) => clean(body[key], max);
-const fail = (error: string, status = 400) => NextResponse.json({ error }, { status });
+} as const;
+
+const fail = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status });
+const text = (body: Record<string, unknown>, key: string, max = 150) => sanitizeText(body[key], max);
 
 export async function POST(request: Request) {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const now = Date.now();
-  const recent = (limits.get(ip) || []).filter(time => now - time < 60 * 60 * 1000);
-  if (recent.length >= 5) return fail("براہ کرم کچھ دیر بعد دوبارہ کوشش کریں۔", 429);
-  recent.push(now); limits.set(ip, recent);
-  let body: unknown;
-  try { body = await request.json(); } catch { return fail("درج کردہ معلومات درست نہیں ہیں۔"); }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return fail("درج کردہ معلومات درست نہیں ہیں۔");
-  const data = body as Record<string, unknown>;
-  if (clean(data.website, 200)) return NextResponse.json({ ok: true });
-  const required = ["name", "fatherName", "city", "phone", "duration", "flight", "makkahDistance", "madinahDistance", "roomType", "hotel", "budget", "companions", "ziyarat", "departureCity", "month"];
+  const data = await readJsonObject(request);
+  if (!data) return fail("درج کردہ معلومات درست نہیں ہیں۔");
+  if (text(data, "website", 200)) return NextResponse.json({ ok: true });
+
+  const required = ["name", "fatherName", "city", "phone", "duration", "flight", "makkahDistance", "madinahDistance", "roomType", "hotel", "companions", "ziyarat", "departureCity", "month"];
   if (required.some(key => !text(data, key))) return fail("براہ کرم تمام ضروری معلومات مکمل کریں۔");
-  if (!/^([+]?(92)|0)?3\d{9}$/.test(text(data, "phone", 30).replace(/[\s()-]/g, ""))) return fail("براہ کرم درست پاکستانی موبائل نمبر درج کریں۔");
+  const name = text(data, "name");
+  const fatherName = text(data, "fatherName");
+  const city = text(data, "city");
+  const phone = text(data, "phone", 30);
+  if (!/^([+]?(92)|0)?3\d{9}$/.test(phone.replace(/[\s()-]/g, ""))) return fail("براہ کرم درست پاکستانی موبائل نمبر درج کریں۔");
   const email = text(data, "email", 254);
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("براہ کرم درست ای میل درج کریں۔");
+  if (email && !isValidEmail(email)) return fail("براہ کرم درست ای میل درج کریں۔");
+
   const pick = (key: string, options: readonly string[]) => options.includes(text(data, key, 100));
   if (!pick("duration", allowed.duration) || !pick("flight", allowed.flight) || !pick("makkahDistance", allowed.distance) || !pick("madinahDistance", allowed.distance) || !pick("roomType", allowed.room) || !pick("hotel", allowed.hotel) || !pick("companions", allowed.companions) || !pick("ziyarat", allowed.answer) || !pick("month", allowed.month)) return fail("براہ کرم دیے گئے اختیارات میں سے درست انتخاب کریں۔");
+
   const budget = Number(data.budget);
   if (!Number.isSafeInteger(budget) || budget < 260000 || budget > 100000000) return fail("فی کس کم از کم بجٹ 260,000 پاکستانی روپے ہونا چاہیے۔");
-  const selected = Array.isArray(data.airlines) ? data.airlines.map(v => clean(v, 100)) : [];
-  if (selected.length < 1 || selected.length > 3 || selected.some(x => !allowed.airlines.includes(x)) || (selected.includes("کوئی بھی مناسب ایئرلائن") && selected.length > 1)) return fail("ایک سے تین درست ایئرلائنز منتخب کریں۔");
-  const mismatch = text(data, "hotel") === "5 اسٹار" && ["10 دن", "15 دن"].includes(text(data, "duration")) && !(text(data, "makkahDistance") === "شٹل سروس" && text(data, "madinahDistance") === "800 میٹر");
-  if (mismatch && budget < 500000) return fail("5 اسٹار ہوٹل کے لیے 10 یا 15 دن کے سفر میں کم از کم بجٹ 500,000 روپے ہونا چاہیے۔");
-  if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) return fail("سروے کی ای میل سروس ابھی ترتیب میں نہیں ہے۔ براہ کرم info@alaamir.co پر رابطہ کریں۔", 503);
-  const cleanName = text(data, "name");
-  const fields: [string, string][] = [
-    ["نام", cleanName], ["والد کا نام", text(data, "fatherName")], ["شہر", text(data, "city")], ["WhatsApp", text(data, "phone")], ["ای میل", email || "درج نہیں کی گئی"],
-    ["سفر کی مدت", text(data, "duration")], ["فلائٹ کی پسند", text(data, "flight")], ["ایئرلائنز", selected.join("، ")], ["مکہ کا فاصلہ", `${text(data, "makkahDistance")} ${text(data, "makkahCustom")}`],
-    ["مدینہ کا فاصلہ", `${text(data, "madinahDistance")} ${text(data, "madinahCustom")}`], ["رہائش", text(data, "roomType")], ["ہوٹل کیٹیگری", text(data, "hotel")], ["فی کس بجٹ", `PKR ${budget.toLocaleString("en-PK")}`],
-    ["سفر کے ساتھی", text(data, "companions")], ["مکہ و مدینہ زیارات", text(data, "ziyarat")], ["دیگر مقامات", text(data, "otherPlaces") || "درج نہیں"], ["روانگی کا شہر", text(data, "departureCity")], ["پسندیدہ مہینہ", text(data, "month")],
+  const airlines = Array.isArray(data.airlines) ? data.airlines.map(value => sanitizeText(value, 100)) : [];
+  if (airlines.length < 1 || airlines.length > 3 || airlines.some(value => !allowed.airlines.includes(value as typeof allowed.airlines[number])) || (airlines.includes("کوئی بھی مناسب ایئرلائن") && airlines.length > 1)) return fail("ایک سے تین درست ایئرلائنز منتخب کریں۔");
+
+  const makkahDistance = text(data, "makkahDistance");
+  const madinahDistance = text(data, "madinahDistance");
+  const duration = text(data, "duration");
+  const hotel = text(data, "hotel");
+  const specialException = makkahDistance === "شٹل سروس" && madinahDistance === "800 میٹر";
+  if (hotel === "5 اسٹار" && ["10 دن", "15 دن"].includes(duration) && budget < 500000 && !specialException) return fail("5 اسٹار ہوٹل کے لیے 10 یا 15 دن کے سفر میں کم از کم بجٹ 500,000 روپے ہونا چاہیے۔");
+
+  const makCustom = text(data, "makkahCustom", 300);
+  const madCustom = text(data, "madinahCustom", 300);
+  const budgetDisplay = `PKR ${budget.toLocaleString("en-PK")}`;
+  const customerFields: MailField[] = [
+    { label: "نام", value: name }, { label: "والد کا نام", value: fatherName }, { label: "شہر", value: city },
+    { label: "WhatsApp", value: phone }, { label: "ای میل", value: email || "درج نہیں کی گئی" },
   ];
-  const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  const submittedAt = new Date().toISOString();
-  const html = `<div dir="rtl" style="font-family:Arial,sans-serif"><h2>عمرہ سروے کی نئی درخواست</h2><p>موصول ہونے کا وقت: ${escape(submittedAt)}</p><table style="border-collapse:collapse;width:100%">${fields.map(([label, value]) => `<tr><th style="text-align:right;padding:9px;border:1px solid #ddd">${escape(label)}</th><td style="padding:9px;border:1px solid #ddd">${escape(value)}</td></tr>`).join("")}</table></div>`;
+  const enquiryFields: MailField[] = [
+    { label: "سفر کی مدت", value: duration }, { label: "فلائٹ کی پسند", value: text(data, "flight") }, { label: "ایئرلائنز", value: airlines.join("، ") },
+    { label: "مکہ کا فاصلہ", value: [makkahDistance, makCustom].filter(Boolean).join(" — ") }, { label: "مدینہ کا فاصلہ", value: [madinahDistance, madCustom].filter(Boolean).join(" — ") },
+    { label: "رہائش", value: text(data, "roomType") }, { label: "ہوٹل کیٹیگری", value: hotel }, { label: "فی کس بجٹ", value: budgetDisplay },
+    { label: "سفر کے ساتھی", value: text(data, "companions") }, { label: "مکہ و مدینہ زیارات", value: text(data, "ziyarat") },
+    { label: "دیگر مقامات", value: text(data, "otherPlaces", 500) || "درج نہیں" }, { label: "روانگی کا شہر", value: text(data, "departureCity") },
+    { label: "پسندیدہ مہینہ", value: text(data, "month") },
+  ];
+
+  if (!smtpIsConfigured()) return fail("ای میل سروس ابھی ترتیب میں نہیں ہے۔ براہ کرم بعد میں دوبارہ کوشش کریں۔", 503);
+  const rate = reserveSubmission(requestIp(request), "umrah", {
+    name, fatherName, city, phone, email, duration, flight: text(data, "flight"), airlines, makkahDistance, makCustom,
+    madinahDistance, madCustom, roomType: text(data, "roomType"), hotel, budget, companions: text(data, "companions"),
+    ziyarat: text(data, "ziyarat"), otherPlaces: text(data, "otherPlaces", 500), departureCity: text(data, "departureCity"), month: text(data, "month"),
+  });
+  if (rate === "limited") return fail("براہ کرم کچھ دیر بعد دوبارہ کوشش کریں۔", 429);
+  if (rate === "duplicate") return fail("یہ سروے ابھی جمع کروایا گیا ہے۔ دوبارہ بھیجنے سے پہلے کچھ دیر انتظار کریں۔", 409);
   try {
-    const response = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: process.env.RESEND_FROM_EMAIL, to: [recipient], subject: "New Umrah Survey Submission — AlAamir International", html, reply_to: email || undefined }), signal: AbortSignal.timeout(10000) });
-    if (!response.ok) return fail("سروے کی ای میل بھیجنے میں مسئلہ پیش آیا۔ براہ کرم دوبارہ کوشش کریں یا info@alaamir.co پر رابطہ کریں۔", 502);
+    await sendLeadEmail({ formType: "umrah", formName: "عمرہ ترجیحات کا سروے", customerName: name, customerEmail: email || undefined, customerPhone: phone, customerFields, enquiryFields });
     return NextResponse.json({ ok: true });
   } catch {
-    return fail("سروے کی ای میل بھیجنے میں عارضی مسئلہ پیش آیا۔ براہ کرم دوبارہ کوشش کریں۔", 502);
+    return fail("سروے کی ای میل بھیجنے میں مسئلہ پیش آیا۔ براہ کرم دوبارہ کوشش کریں۔", 502);
   }
 }
